@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Welcome to Firebase Hosting</title>
+
+  <!-- Firebase App is always required and must be first -->
+  <script src="/__/firebase/5.8.0/firebase-app.js"></script>
+
+  <!-- Add additional services that you want to use -->
+  <script src="/__/firebase/5.8.0/firebase-auth.js"></script>
+  <script src="/__/firebase/5.8.0/firebase-firestore.js"></script>
+  <script src="/__/firebase/5.8.0/firebase-database.js"></script>
+  <script src="/__/firebase/5.8.0/firebase-messaging.js"></script>
+  <script src="/__/firebase/5.8.0/firebase-functions.js"></script>
+  <script src="/__/firebase/5.8.0/firebase-storage.js"></script>
+
+  <script src="/__/firebase/init.js"></script>
+</head>
+
+<body>
+  <div>
+
+    <div>counter: <span id="counter-text"></span></div>
+    <button id="counter_clear">counter clear</button>
+    <button id="increment_counter">increment counter</button>
+    <button id="get_count">get count</button>
+
+    <script>
+      // button element
+      const counterClearBtn = document.querySelector('#counter_clear')
+      const incrementCounterBtn = document.querySelector('#increment_counter')
+      const getCountBtn = document.querySelector('#get_count')
+      const counterText = document.querySelector('#counter-text')
+
+      // restaurant ref
+      const firestore = firebase.firestore()
+      const restaurantDocRef = firestore
+        .collection('restaurants')
+        .doc('arinell-pizza')
+
+      restaurantDocRef.onSnapshot(doc => {
+        const source = doc.metadata.hasPendingWrites ? "Local" : "Server";
+        const data = doc.data()
+        console.log('source: ', source);
+        console.log('data:', data);
+        alert('!')
+      })
+
+
+      // clear counter
+      const numShards = 3
+      counterClearBtn.addEventListener('click', event => {
+        createCounter(restaurantDocRef, numShards)
+      })
+
+      incrementCounterBtn.addEventListener('click', event => {
+        incrementCounter(restaurantDocRef, numShards)
+      })
+
+      getCountBtn.addEventListener('click', event => {
+        getCount(restaurantDocRef)
+      })
+
+
+      // clear counter function
+      function createCounter(ref, numShards) {
+        var batch = firestore.batch();
+
+        // Initialize the counter document
+        batch.update(ref, {
+          numShards: numShards
+        });
+
+        // Initialize each shard with count=0
+        for (let i = 0; i < numShards; i++) {
+          let shardRef = ref.collection('shards').doc(i.toString());
+          batch.set(shardRef, {
+            count: 0
+          });
+        }
+
+        // Commit the write batch
+        return batch.commit();
+      }
+
+      // increment counter
+      function incrementCounter(ref, numShards) {
+        // Select a shard of the counter at random
+        const shardId = Math.floor(Math.random() * numShards).toString();
+        const shardRef = ref.collection('shards').doc(shardId);
+
+        // Update count in a transaction
+        return firestore.runTransaction(t => {
+          return t.get(shardRef).then(doc => {
+            const new_count = doc.data().count + 1;
+            t.update(shardRef, {
+              count: new_count
+            });
+          });
+        });
+      }
+
+      // get count
+      function getCount(ref) {
+        // Sum the count of each shard in the subcollection
+        return ref.collection('shards').get()
+          .then(snapshot => {
+            let totalCount = 0;
+            snapshot.forEach(doc => {
+              totalCount += doc.data().count;
+            });
+
+            counterText.textContent = totalCount
+          });
+      }
+
+      // https://qiita.com/uriuriuriu/items/e907375270c6d9095fb7 
+      // function docShardCountsWrite(targetsRef, refId, docColName, shardsNum, afterCount, updateAt) {
+      //   const ref = targetsRef.doc(refId)
+
+      //   return ref.get()
+      //     .then(function (doc) {
+      //       if (!doc.exists) return
+      //       let likes = doc.data()[docColName]
+      //       let shardCounts = mergeObj(likes, 'shardCounts', shardsNum, afterCount)
+      //       let allCount = 0
+      //       Object.keys(shardCounts).forEach(key => {
+      //         allCount += parseInt(shardCounts[key])
+      //       })
+      //       let setItem = {}
+      //       setItem[docColName] = {
+      //         count: allCount,
+      //         shards_num: makeShardsNum(allCount),
+      //         shardCounts: shardCounts,
+      //         update_at: updateAt
+      //       }
+      //       ref.set(setItem, {
+      //         merge: true
+      //       })
+      //     })
+      // }
+    </script>
+</body>
+
+</html>
