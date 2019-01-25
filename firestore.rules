@@ -3,6 +3,20 @@
 // 「*は使わない」はアスタリスクを使わずに中までネストして小さくallowした方が強いから
 // 「writeは使わない」writeって書くとdeleteも含まれてしまうからcreate、update、deleteは明示的に書くということ
 
+// documentに必ず以下のフィールドをつける
+// id: [doc id]
+// docUserId: [owner doc id]
+
+// 一対一にする場合は「id == docUserId」にする
+// ドキュメント自体に権限を持たす場合は以下をつける
+// docRoles: {
+//   [doc id]: [role type],
+//   ex)
+//   [1234qwer]: 'writer',
+//   [4567asdf]: 'reader',
+//   [6789zxcv]: 'commenter',
+// }
+
 // request
 // クライアントから受信したリクエストに関する情報を含むマップ
 // auth と resource の2つ
@@ -35,7 +49,7 @@
 // ドキュメントが存在するかどうかを確認
 // 引数にpathを渡してあげると、存在しているかどうかをbool値で返してくれる
 // コレクションでは使用することができません
-// get(/databases/$(database)/documents/restaurants/$(restaurantsId))
+// get(/databases/$(database)/documents/restaurants/$(restaurantId))
 
 // getAter()
 // 指定したpathのドキュメントを、 現在の書き込みリクエストが成功したという体で返却。
@@ -75,9 +89,11 @@
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ユーザID 必ずisSignedIn()のあと
-    function userId() {
-      return request.auth.uid;
+    function existingData() {
+      return resource.data;
+    }
+    function incomingData() {
+      return request.resource.data;
     }
 
     // ログインしているか
@@ -85,59 +101,140 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // サインインしているユーザのIDかどうかをチェック
-    function isSignedInUid(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    // サインインユーザがオーナーかどうか
+    function isOwnDoc() {
+      return isSignedIn() && request.auth.uid == existingData().docUserId;
+    }
+
+    function isOneOfRoles(roles) {
+      return isSignedIn() && existingData().docRoles[request.auth.uid] in roles;
+    }
+
+    // 保存されているリソースが空かチェック
+    function isNew() {
+      return resource == null;
+    }
+    function isExist() {
+      return resource != null;
+    }
+
+    // 必須のフィールドがあるか
+    function requiredFields() {
+      return request.resource.data.keys().hasAll(["id", "docUserId"]);
+    }
+
+    // フィールドがあるか
+    function checkFields(fields) {
+      return  request.resource.data.keys().hasAll(fields);
+    }
+
+    // フィールドを限定
+    function limitFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
     }
 
     // リクエストリソースデータのユーザのロールが引数のロールと等しいかチェック
-    function sendUserRoleIs(role) {
-      return isSignedIn() && request.resource.data.roles[userId()] == role;
-    }
+    // function sendUserRoleIs(role) {
+    //   return isSignedIn() && request.resource.data.roles[request.auth.uid] == role;
+    // }
 
-    // リソース
-    // 保存されているリソースが空家チェック
-    function savedResourceIsNull(rsc) {
-      return rsc == null;
-    }
-
+    // リソース //
     // リソースドキュメントのロールの中に引数のロールが含まれるかをチェック
-    function isOneOfRoles(rsc, roles) {
-      return isSignedIn() && rsc.data.roles[userId()] in roles;
+    function isOneOfResourceRoles(resource, roles) {
+      return isSignedIn() && existingData().roles[request.auth.uid] in roles;
     }
 
     // レストランのリソースを取得
-    function getRestaurantDoc(restaurantsId) {
-      return get(/databases/$(database)/documents/restaurants/$(restaurantsId));
+    function getRestaurantDoc(restaurantId) {
+      return get(/databases/$(database)/documents/restaurants/$(restaurantId));
     }
 
     // レストランのコメントのリソースを取得
-    function getRestaurantCommentDoc(commentId) {
-      return get(/databases/$(database)/documents/restaurants/$(restaurantsId)/comments/$(commentId));
+    function getRestaurantCommentDoc(restaurantId, commentId) {
+      return get(/databases/$(database)/documents/restaurants/$(restaurantId)/comments/$(commentId));
+    }
+
+    // ユーザのルームのリソースを取得
+    function getUserRoomDoc(userId, roomId) {
+      return get(/databases/$(database)/documents/users/$(userId)/rooms/$(roomId));
+    }
+
+    match /users/{userId} {
+
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+      allow read: if isSignedIn();
+
+      match /rooms/{roomId} {
+        allow create: if isSignedIn();
+        allow update: if isSignedIn();
+        allow delete: if isSignedIn();
+        allow read: if isSignedIn();
+      }
     }
   
-    match /restaurants/{restaurantsId} {
+    match /restaurants/{restaurantId} {
 
       // name、rolesの変更、フィールドの追加はできない
-      function onlyContentChanged() {
-          return request.resource.data.name == resource.data.name
-            && request.resource.data.roles == resource.data.roles
-            && request.resource.size() == resource.size();
-      }
+      // function onlyContentChanged() {
+      //     return request.resource.data.name == resource.data.name
+      //       && request.resource.data.roles == resource.data.roles
+      //       && request.resource.size() == resource.size();
+      // }
 
-      allow create: if savedResourceIsNull(resource) && sendUserRoleIs('owner');
-      allow update: if isOneOfRoles(resource, ['owner']) || (isOneOfRoles(resource, ['writer']) && onlyContentChanged());
-      allow delete: if isOneOfRoles(resource, ['owner']);
-      allow read:   if isOneOfRoles(resource, ['owner', 'writer', 'commenter', 'reader']);
+      allow create: if isSignedIn() && isNew() && requiredFields() && checkFields(['docRoles', 'content', 'name']);
+      allow update: if (isExist() && isOwnDoc()) || (isExist() && isOneOfRoles(['writer']) && limitFields(['content']));
+      allow delete: if isExist() && isOwnDoc()
+      allow read:   if isExist() && isOwnDoc() || isOneOfRoles(['writer', 'commenter', 'reader']);
 
       match /comments/{commentId} {
-        allow read:   if isOneOfRoles(getRestaurantDoc(restaurantsId), ['owner', 'writer', 'commenter', 'reader']); 
-        allow create: if isOneOfRoles(getRestaurantDoc(restaurantsId), ['owner', 'writer', 'commenter', 'reader'])
-                          && !getRestaurantCommentDoc(commentId).exists()
+        allow read:   if isOneOfRoles(getRestaurantDoc(restaurantId), ['owner', 'writer', 'commenter', 'reader']); 
+        allow create: if isOneOfRoles(getRestaurantDoc(restaurantId), ['owner', 'writer', 'commenter', 'reader'])
+                          && !exists(getRestaurantCommentDoc(restaurantId, commentId))
                           && isSignedInUid(request.resource.data.user);
-        allow delete: if isOneOfRoles(getRestaurantDoc(restaurantsId), ['owner'])
+        allow delete: if isOneOfRoles(getRestaurantDoc(restaurantId), ['owner'])
       }
       
+    }
+
+    match /rooms/{roomId} {
+      allow read: if getUserRoomDoc()
+      allow update: if isSignedIn();
+      allow create: if isSignedIn();
+      allow delete: if isSignedIn();
+
+
+    }
+
+    // match /rooms/{roomId} {
+    //   allow read, write: if exists(/databases/$(database)/documents/users/$(request.auth.uid)/rooms/$(roomId));
+
+    //   match /messages/{messageId} {
+    //     allow read: if exists(/databases/$(database)/documents/users/$(request.auth.uid)/rooms/$(roomId));
+    //     allow create: if exists(/databases/$(database)/documents/users/$(request.auth.uid)/rooms/$(roomId))
+    //                          && request.resource.data.keys().hasAll(["datetime", "content", "userId"])
+    //                          && request.resource.data.size() == 3
+    //                          && request.resource.data.datetime is timestamp
+    //                          && request.time < request.resource.data.datetime + duration.value(1, 'm')
+    //                          && request.resource.data.content is string
+    //                          && request.resource.data.userId is string;
+    //     allow update: if exists(/databases/$(database)/documents/users/$(request.auth.uid)/rooms/$(roomId))
+    //                          && request.resource.data.keys().hasAll(["read"])
+    //                          && request.resource.data.read is bool
+    //                          && resource.data.datetime == request.resource.data.datetime
+    //                          && resource.data.content == request.resource.data.content
+    //                          && resource.data.userId == request.resource.data.userId
+    //                          && request.resource.data.size() == 4;
+    //   }
+    // }
+
+
+    
+    match /fcmTokens/{fcmTokenId} {
+      allow read: if isSignedIn();
+      allow update: if isSignedIn();
+      allow create: if isSignedIn();
     }
   }
 }

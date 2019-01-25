@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>Welcome to Firebase Hosting</title>
+
+  <!-- Firebase App is always required and must be first -->
+  <script src='/__/firebase/5.8.0/firebase-app.js'></script>
+
+  <!-- Add additional services that you want to use -->
+  <script src='/__/firebase/5.8.0/firebase-auth.js'></script>
+  <script src='/__/firebase/5.8.0/firebase-firestore.js'></script>
+  <script src='/__/firebase/5.8.0/firebase-database.js'></script>
+  <script src='/__/firebase/5.8.0/firebase-messaging.js'></script>
+  <script src='/__/firebase/5.8.0/firebase-functions.js'></script>
+  <script src='/__/firebase/5.8.0/firebase-storage.js'></script>
+
+  <script src='/__/firebase/init.js'></script>
+</head>
+
+<body>
+  <div id='wrapper'>
+
+    <!-- Header section containing logo -->
+    <header id='header'>
+      <div>Friendly Chat</div>
+      <div id='user-container'>
+        <div id='user-name' hidden></div>
+        <img id='user-pic' src="" hidden>
+      </div>
+      <button id='sign-out' type='button'>Sign-out</button>
+      <button id='sign-in' type='button' hidden>Sign-in</button>
+  </div>
+  </header>
+
+  <main id='main'>
+    <!-- Messages container -->
+    <div id='messages-container'>
+      <div id='message-list'></div>
+    </div>
+  </main>
+
+  <footer id='footer'>
+    <div class='footer-inner'>
+      <textarea id='message-input' class='message-input'></textarea>
+    </div>
+    <div class='footer-inner'>
+      <input id='image-input' class='image-input' type='file' multiple accept='image/*,capture=camera' style='flex: 4'>
+    </div>
+    <div class='footer-inner'>
+      <div id='image-output' class='image-output'></div>
+    </div>
+
+    <button id="send" disabled type="button">Send</button>
+  </footer>
+
+  <div id='snackbar' class="snackbar">
+    <h2 class='type'></h2>
+    <p class='message'></p>
+  </div>
+
+  <script>
+    initFirebaseAuth()
+    const signInBtn = document.querySelector('#sign-in')
+    const signOutBtn = document.querySelector('#sign-out')
+    const userPicElm = document.querySelector('#user-pic');
+    const userNameElm = document.querySelector('#user-name');
+    const messageInputElm = document.querySelector('#message-input');
+    const sendBtn = document.querySelector('#send');
+    const snackbarElm = document.querySelector('#snackbar');
+    const snackbarTypeElm = document.querySelector('#snackbar .type');
+    const snackbarMessageElm = document.querySelector('#snackbar .message');
+
+    signInBtn.addEventListener('click', event => {
+      signIn(event)
+    })
+
+    signOutBtn.addEventListener('click', event => {
+      signOut(event)
+    })
+
+    sendBtn.addEventListener('click', event => {
+      onMessageFormSubmit(event)
+    })
+
+    // Toggle for the button.
+    messageInputElm.addEventListener('keyup', toggleButton);
+    messageInputElm.addEventListener('change', toggleButton);
+
+
+    function signIn() {
+      const provider = new firebase.auth.GoogleAuthProvider()
+      firebase.auth().signInWithPopup(provider)
+    }
+
+    function signOut() {
+      firebase.auth().signOut()
+    }
+
+    function initFirebaseAuth() {
+      firebase.auth().onAuthStateChanged(authStateObserver)
+    }
+
+    // Returns the signed-in user's profile Pic URL.
+    function getProfilePicUrl() {
+      const photoUrl = firebase.auth().currentUser.ptotoUrl;
+      return photoUrl ? photoUrl : '/images/profile_placeholder.png'
+    }
+
+    // Returns the signed-in user's display name.
+    function getUserName() {
+      return firebase.auth().currentUser.displayName;
+    }
+
+    function isUserSignedIn() {
+      return firebase.auth().currentUser != null ? true : false;
+    }
+
+    // Adds a size to Google Profile pics URLs.
+    function addSizeToGoogleProfilePic(url) {
+      if (url.indexOf('googleusercontent.com') !== -1 && url.indexOf('?') === -1) {
+        return url + '?sz=150';
+      }
+      return url;
+    }
+
+    // Saves the messaging device token to the datastore.
+    function saveMessagingDeviceToken() {
+
+      firebase.messaging().getToken()
+        .then(currentToken => {
+
+          if (currentToken) {
+            console.log('Got FCM device token:', currentToken);
+
+            // Saving the Device Token to the datastore.
+            firebase.firestore().collection('fcmTokens').doc(currentToken)
+              .set({
+                uid: firebase.auth().currentUser.uid
+              })
+              .catch(err => console.error(err));
+          } else {
+
+            // Need to request permissions to show notifications.
+            requestNotificationsPermissions();
+          }
+        })
+        .catch(err => console.error('Unable to get messaging token.', err));
+    }
+
+    // Requests permissions to show notifications.
+    function requestNotificationsPermissions() {
+
+      console.log('Requesting notifications permission...');
+
+      firebase.messaging().requestPermission()
+        .then(_ => {
+
+          // Notification permission granted.
+          saveMessagingDeviceToken();
+        })
+        .catch(err => console.error('Unable to get permission to notify.', err));
+    }
+
+    function authStateObserver(user) {
+      if (user) {
+
+        // Get the signed-in user's profile pic.
+        var profilePicUrl = getProfilePicUrl();
+        // Get the signed-in user's name.
+        var userName = getUserName();
+
+        // Set the user's profile pic and name.
+        userNameElm.textContent = userName;
+        userPicElm.src = addSizeToGoogleProfilePic(profilePicUrl);
+
+        // Show user's profile and sign-out button.
+        userNameElm.removeAttribute('hidden')
+        userPicElm.removeAttribute('hidden');
+        signOutBtn.removeAttribute('hidden');
+
+        // Hide sign-in button.
+        signInBtn.setAttribute('hidden', 'true');
+
+        // We save the Firebase Messaging Device token and enable notifications.
+        saveMessagingDeviceToken();
+      } else {
+
+        // Hide user's profile and sign-out button.
+        userNameElm.setAttribute('hidden', 'true');
+        userPicElm.setAttribute('hidden', 'true');
+        signOutBtn.setAttribute('hidden', 'true');
+
+        // Show sign-in button.
+        signInBtn.removeAttribute('hidden');
+      }
+    }
+
+    // Enables or disables the submit button depending on the values of the input
+    // fields.
+    function toggleButton() {
+
+      if (messageInputElm.value) {
+        sendBtn.removeAttribute('disabled');
+      } else {
+        sendBtn.setAttribute('disabled', 'true');
+      }
+    }
+
+    // Triggered when the send new message form is submitted.
+    function onMessageFormSubmit(event) {
+
+      // Check that the user entered a message and is signed in.
+      if (messageInputElm.value && checkSignedInWithMessage()) {
+
+        saveMessage(messageInputElm.value)
+          .then(function () {
+            // Clear message text field and re-enable the SEND button.
+            resetMaterialTextfield(messageInputElm);
+            toggleButton();
+          });
+      }
+    }
+
+    // Returns true if user is signed-in. Otherwise false and displays a message.
+    function checkSignedInWithMessage() {
+
+      // Return true if the user is signed in Firebase
+      if (isUserSignedIn()) {
+        return true;
+      }
+
+      // Display a message to the user using a Toast.
+      var data = {
+        message: 'You must sign-in first',
+        timeout: 2000
+      };
+      showSnackbar(data);
+      return false;
+    }
+
+    // Saves a new message on the Cloud Firestore.
+    function saveMessage(messageText) {
+
+      // Add a new message entry to the Firebase database.
+      return firebase.firestore().collection('messages').add({
+          name: getUserName(),
+          text: messageText,
+          profilePicUrl: getProfilePicUrl(),
+          timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        })
+        .catch(function (error) {
+          console.error('Error writing new message to Firebase Database', error);
+        });
+    }
+
+    // Display a message to the user using a Toast.
+    function showSnackbar(data) {
+
+      snackbarTypeElm.textContent = 'error!'
+      snackbarMessageElm.textContent = data.message
+      snackbarElm.classList.add('_active')
+      setTimeout(() => {
+        snackbarElm.classList.remove('_active')
+      }, data.timeout);
+    }
+  </script>
+
+  <style>
+    #messages-container {
+      border: 1px solid rgb(169, 169, 169);
+      padding: 1rem 0;
+      margin: 1rem 0;
+      min-height: 10vh;
+      max-height: 80vh;
+    }
+
+    .footer-inner {
+      display: flex;
+      margin: 1rem 0;
+    }
+
+    .message-input,
+    .image-input,
+    .image-output {
+      flex: 1;
+    }
+
+    .snackbar {
+      position: absolute;
+      border: 1px solid rgb(169, 169, 169);
+      bottom: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      text-align: center;
+      transition: all 1s linear;
+      transform: translateY(0%);
+    }
+
+    .snackbar._active {
+      transform: translateY(100%);
+    }
+  </style>
+</body>
+
+</html>
