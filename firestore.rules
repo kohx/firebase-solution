@@ -1,13 +1,36 @@
 // https://firebase.google.com/docs/firestore/security/secure-data?hl=ja
+// https://qiita.com/sgr-ksmt/items/a551251035f29ede2258
 
+// [ resource ]: 現在DBに格納されているドキュメント
+// [ request.resource ]: 書き込みを行った場合に期待される将来のドキュメント（の状態）
+
+// ex)
+// [ read(get, list) ] 現在のフィールドが「{name: 'mike', age: 25}」のとき
+// - resource は「undefined」
+// - request.resource	は「{name: 'mike',age: 25}」
+// 
+// [ create ] 書き込むフィールドが「{name: 'mike', age: 25}」のとき
+// - resource は「undefined」
+// - request.resource	 は「{name: 'mike',age: 25}」
+// 
+// [ update ] 現在のフィールドが「{name: 'mike', age: 25}」で書き込むフィールドが「{company: 'Foobar Inc.'}」のとき
+// - resource	は「{name: 'mike',age: 25}」
+// - request.resource	 は「{name: 'mike', age: 25, company: 'Foobar Inc.'}」
+// 
+// [ delete ] 現在のフィールドが「{name: 'mike', age: 25}」のとき
+// - resource	は「{name: 'mike',age: 25}」
+// - request.resource	 は「undefined」
+
+// ガイドライン
 // 「*は使わない」はアスタリスクを使わずに中までネストして小さくallowした方が強いから
 // 「writeは使わない」writeって書くとdeleteも含まれてしまうからcreate、update、deleteは明示的に書くということ
+// validationできなくなるのでcreate時にすべてのフィールドをつくる
 
 // documentに必ず以下のフィールドをつける
 // id: [doc id]
-// docUserId: [owner doc id]
+// userId: [owner doc id]
 
-// 一対一にする場合は「id == docUserId」にする
+// 1対1にする場合は「id == userId」にする
 // ドキュメント自体に権限を持たす場合は以下をつける
 // docRoles: {
 //   [doc id]: [role type],
@@ -89,122 +112,170 @@
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function existingData() {
+    //------------------------------
+    // helpers
+    //------------------------------
+    
+    function exData() {
       return resource.data;
     }
-    function incomingData() {
+
+    function inData() {
       return request.resource.data;
     }
 
+    function authId() {
+      return request.auth.uid;
+    }
+
     // ログインしているか
-    function isSignedIn() {
+    function signed() {
       return request.auth != null;
     }
 
-    // サインインユーザがオーナーかどうか
-    function isOwnDoc() {
-      return isSignedIn() && request.auth.uid == existingData().docUserId;
+    // get doc path
+    function getPath(paths) {
+    	return path([['databases', database, 'documents'].join('/'), paths.join('/')].join('/'));
     }
 
-    function isOneOfRoles(roles) {
-      return isSignedIn() && existingData().docRoles[request.auth.uid] in roles;
-    }
+    // get doc data
+    function getDoc(paths) {
+      return get(getPath(paths)).data;
+    }   
 
-    // 保存されているリソースが空かチェック
+    // exist doc
+    function existDoc(paths) {
+      return exists(getPath(paths));
+    }   
+
+    // check new doc
     function isNew() {
       return resource == null;
     }
+
+    // check exist doc
     function isExist() {
       return resource != null;
     }
 
-    // 必須のフィールドがあるか
-    function requiredFields() {
-      return request.resource.data.keys().hasAll(["id", "docUserId"]);
+    // check user is owner
+    function isOwn() {
+      return signed() && authId() == exData().userId;
     }
 
-    // フィールドがあるか
-    function checkFields(fields) {
-      return  request.resource.data.keys().hasAll(fields);
+    // check user is rsc orner
+    function isOwnRsc(paths) {
+      return signed() && authId() == getDoc(paths).userId;
     }
 
-    // フィールドを限定
-    function limitFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
+    // check user in docRoles
+    function isInRoles(roles) {
+      return signed() && exData().docRoles[request.auth.uid] in roles;
     }
 
-    // リクエストリソースデータのユーザのロールが引数のロールと等しいかチェック
-    // function sendUserRoleIs(role) {
-    //   return isSignedIn() && request.resource.data.roles[request.auth.uid] == role;
-    // }
-
-    // リソース //
-    // リソースドキュメントのロールの中に引数のロールが含まれるかをチェック
-    function isOneOfResourceRoles(resource, roles) {
-      return isSignedIn() && existingData().roles[request.auth.uid] in roles;
+    // check user in rsc docRoles
+    function isInRscRoles(paths, roles) {
+      return signed() && getDoc(paths).docRoles[request.auth.uid] in roles;
     }
 
-    // レストランのリソースを取得
-    function getRestaurantDoc(restaurantId) {
-      return get(/databases/$(database)/documents/restaurants/$(restaurantId));
-    }
-
-    // レストランのコメントのリソースを取得
-    function getRestaurantCommentDoc(restaurantId, commentId) {
-      return get(/databases/$(database)/documents/restaurants/$(restaurantId)/comments/$(commentId));
-    }
-
-    // ユーザのルームのリソースを取得
-    function getUserRoomDoc(userId, roomId) {
-      return get(/databases/$(database)/documents/users/$(userId)/rooms/$(roomId));
-    }
-
+    //------------------------------
+    // users
+    //------------------------------
     match /users/{userId} {
+      allow create: if signed() && isNew() && validation();
+      allow update: if isExist() && isOwn() && validation();
+      allow delete: if isExist() && isOwn()
+      allow read: if signed() && isExist();
 
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
-      allow delete: if isSignedIn();
-      allow read: if isSignedIn();
+      // validation
+      function validation(){
+        return 
+          inData().id is string
+          && inData().userId is string
+          && inData().first is string
+          && inData().last is string
+          ;
+      }
 
+      //------------------------------
+      // user rooms
+      //------------------------------
       match /rooms/{roomId} {
-        allow create: if isSignedIn();
-        allow update: if isSignedIn();
-        allow delete: if isSignedIn();
-        allow read: if isSignedIn();
+        allow create: if signed();
+        allow update: if signed();
+        allow delete: if signed();
+        allow read: if signed();
       }
     }
-  
+
+    //------------------------------
+    // restaurants
+    //------------------------------
     match /restaurants/{restaurantId} {
+      allow create: if signed() && isNew() && createValidation();
+      allow update: if (isOwn() || isInRoles(['writer'])) && isExist() && updateValidation();
+      allow delete: if isOwn() && isExist();
+      allow read: if (isOwn() || isInRoles(['writer', 'commenter', 'reader'])) && isExist();
 
-      // name、rolesの変更、フィールドの追加はできない
-      // function onlyContentChanged() {
-      //     return request.resource.data.name == resource.data.name
-      //       && request.resource.data.roles == resource.data.roles
-      //       && request.resource.size() == resource.size();
-      // }
-
-      allow create: if isSignedIn() && isNew() && requiredFields() && checkFields(['docRoles', 'content', 'name']);
-      allow update: if (isExist() && isOwnDoc()) || (isExist() && isOneOfRoles(['writer']) && limitFields(['content']));
-      allow delete: if isExist() && isOwnDoc()
-      allow read:   if isExist() && isOwnDoc() || isOneOfRoles(['writer', 'commenter', 'reader']);
-
-      match /comments/{commentId} {
-        allow read:   if isOneOfRoles(getRestaurantDoc(restaurantId), ['owner', 'writer', 'commenter', 'reader']); 
-        allow create: if isOneOfRoles(getRestaurantDoc(restaurantId), ['owner', 'writer', 'commenter', 'reader'])
-                          && !exists(getRestaurantCommentDoc(restaurantId, commentId))
-                          && isSignedInUid(request.resource.data.user);
-        allow delete: if isOneOfRoles(getRestaurantDoc(restaurantId), ['owner'])
+      // create validation
+      function createValidation(){
+          return 
+            inData().id is string
+            && inData().userId is string
+            && inData().docRoles is map
+            && inData().name is string
+            && inData().content is string
+            && inData().numShards is int
+            && inData().ratingAvg is int
+            && inData().ratingTimes is int
+            && inData().ratingTotal is int
+            ;
       }
       
+      // update validation
+      function updateValidation() {
+          return 
+            inData().id == exData().id
+            && inData().userId == exData().userId
+            && (isInRoles(['writer', 'commenter', 'reader']) && inData().docRoles == exData().docRoles)
+            && inData().name is string
+            && inData().content is string
+            && inData().numShards == exData().numShards
+            && inData().ratingAvg == exData().ratingAvg
+            && inData().ratingTimes == exData().ratingTimes
+            && inData().ratingTotal == exData().ratingTotal
+            && inData().size() == exData().size()
+            ;
+      }
+
+      //------------------------------
+      // restaurant comments
+      //------------------------------
+      match /comments/{commentId} {
+        allow create: if isNew() && (isOwnRsc(['restaurants', restaurantId]) || isInRscRoles(['restaurants', restaurantId], ['commenter']));
+        allow update: if isExist() && (isOwnRsc(['restaurants', restaurantId]) || isInRscRoles(['restaurants', restaurantId], ['commenter']));
+        allow delete: if isExist() && (isOwnRsc(['restaurants', restaurantId]) || isInRscRoles(['restaurants', restaurantId], ['commenter']));
+        allow read: if isExist() && (isOwnRsc(['restaurants', restaurantId]) || isInRscRoles(['restaurants', restaurantId], ['writer', 'commenter', 'reader']));
+      }
+
+      // validation
+      function validation(){
+        return 
+          inData().id is string
+          && inData().userId is string
+          && inData().content is string
+          ;
+      }
     }
 
+    //------------------------------
+    // restaurant rooms
+    //------------------------------
     match /rooms/{roomId} {
-      allow read: if getUserRoomDoc()
-      allow update: if isSignedIn();
-      allow create: if isSignedIn();
-      allow delete: if isSignedIn();
-
-
+      allow read: if signed()
+      allow update: if signed();
+      allow create: if signed();
+      allow delete: if signed();
     }
 
     // match /rooms/{roomId} {
@@ -229,12 +300,13 @@ service cloud.firestore {
     //   }
     // }
 
-
-    
+    //------------------------------
+    // fcmTokens
+    //------------------------------
     match /fcmTokens/{fcmTokenId} {
-      allow read: if isSignedIn();
-      allow update: if isSignedIn();
-      allow create: if isSignedIn();
+      allow read: if signed();
+      allow update: if signed();
+      allow create: if signed();
     }
   }
 }
