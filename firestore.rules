@@ -144,7 +144,7 @@ service cloud.firestore {
     }   
 
     // exist doc
-    function existDoc(paths) {
+    function isExistDoc(paths) {
       return exists(getPath(paths));
     }   
 
@@ -196,15 +196,34 @@ service cloud.firestore {
           && inData().last is string
           ;
       }
+    }
 
-      //------------------------------
-      // user rooms
-      //------------------------------
-      match /rooms/{roomId} {
-        allow create: if signed();
-        allow update: if signed();
-        allow delete: if signed();
-        allow read: if signed();
+    //------------------------------
+    // rooms
+    //------------------------------
+    match /rooms/{roomId} {
+      allow create: if isNew() && signed();
+      allow update: if isExist() && isOwn();
+      allow delete: if isExist() && isOwn();
+      allow read: if isExist();
+
+      match /messages/{messageId} {
+        allow create: if isNew() && isExistDoc(['rooms', roomId]);
+  //                          && request.resource.data.keys().hasAll(["datetime", "content", "userId"])
+  //                          && request.resource.data.size() == 3
+  //                          && request.resource.data.datetime is timestamp
+  //                          && request.time < request.resource.data.datetime + duration.value(1, 'm')
+  //                          && request.resource.data.content is string
+  //                          && request.resource.data.userId is string;
+  //     allow update: if exists(/databases/$(database)/documents/users/$(request.auth.uid)/rooms/$(roomId))
+  //                          && request.resource.data.keys().hasAll(["read"])
+  //                          && request.resource.data.read is bool
+  //                          && resource.data.datetime == request.resource.data.datetime
+  //                          && resource.data.content == request.resource.data.content
+  //                          && resource.data.userId == request.resource.data.userId
+  //                          && request.resource.data.size() == 4;
+  //   }
+        allow read: if isExist();
       }
     }
 
@@ -237,7 +256,7 @@ service cloud.firestore {
           return 
             inData().id == exData().id
             && inData().userId == exData().userId
-            && (isInRoles(['writer', 'commenter', 'reader']) && inData().docRoles == exData().docRoles)
+            && isOwn() || (isInRoles(['writer', 'commenter', 'reader']) && inData().docRoles == exData().docRoles)
             && inData().name is string
             && inData().content is string
             && inData().numShards == exData().numShards
@@ -267,38 +286,6 @@ service cloud.firestore {
           ;
       }
     }
-
-    //------------------------------
-    // restaurant rooms
-    //------------------------------
-    match /rooms/{roomId} {
-      allow read: if signed()
-      allow update: if signed();
-      allow create: if signed();
-      allow delete: if signed();
-    }
-
-    // match /rooms/{roomId} {
-    //   allow read, write: if exists(/databases/$(database)/documents/users/$(request.auth.uid)/rooms/$(roomId));
-
-    //   match /messages/{messageId} {
-    //     allow read: if exists(/databases/$(database)/documents/users/$(request.auth.uid)/rooms/$(roomId));
-    //     allow create: if exists(/databases/$(database)/documents/users/$(request.auth.uid)/rooms/$(roomId))
-    //                          && request.resource.data.keys().hasAll(["datetime", "content", "userId"])
-    //                          && request.resource.data.size() == 3
-    //                          && request.resource.data.datetime is timestamp
-    //                          && request.time < request.resource.data.datetime + duration.value(1, 'm')
-    //                          && request.resource.data.content is string
-    //                          && request.resource.data.userId is string;
-    //     allow update: if exists(/databases/$(database)/documents/users/$(request.auth.uid)/rooms/$(roomId))
-    //                          && request.resource.data.keys().hasAll(["read"])
-    //                          && request.resource.data.read is bool
-    //                          && resource.data.datetime == request.resource.data.datetime
-    //                          && resource.data.content == request.resource.data.content
-    //                          && resource.data.userId == request.resource.data.userId
-    //                          && request.resource.data.size() == 4;
-    //   }
-    // }
 
     //------------------------------
     // fcmTokens

@@ -63,6 +63,7 @@
 
   <script>
     initFirebaseAuth()
+    const roomId = 1
     const signInBtn = document.querySelector('#sign-in')
     const signOutBtn = document.querySelector('#sign-out')
     const userPicElm = document.querySelector('#user-pic');
@@ -72,6 +73,7 @@
     const snackbarElm = document.querySelector('#snackbar');
     const snackbarTypeElm = document.querySelector('#snackbar .type');
     const snackbarMessageElm = document.querySelector('#snackbar .message');
+    const messageListElm = document.querySelector('#message-list');
 
     signInBtn.addEventListener('click', event => {
       signIn(event)
@@ -82,7 +84,7 @@
     })
 
     sendBtn.addEventListener('click', event => {
-      onMessageFormSubmit(event)
+      sendMessage(event)
     })
 
     // Toggle for the button.
@@ -107,6 +109,10 @@
     function getProfilePicUrl() {
       const photoUrl = firebase.auth().currentUser.ptotoUrl;
       return photoUrl ? photoUrl : '/images/profile_placeholder.png'
+    }
+
+    function getUserId() {
+      return firebase.auth().currentUser.uid;
     }
 
     // Returns the signed-in user's display name.
@@ -186,6 +192,9 @@
 
         // We save the Firebase Messaging Device token and enable notifications.
         saveMessagingDeviceToken();
+
+        // We load currently existing chat messages and listen to new ones.
+        loadMessages();
       } else {
 
         // Hide user's profile and sign-out button.
@@ -210,17 +219,17 @@
     }
 
     // Triggered when the send new message form is submitted.
-    function onMessageFormSubmit(event) {
+    function sendMessage(event) {
 
       // Check that the user entered a message and is signed in.
       if (messageInputElm.value && checkSignedInWithMessage()) {
 
         saveMessage(messageInputElm.value)
-          .then(function () {
+          .then(_ => {
             // Clear message text field and re-enable the SEND button.
-            resetMaterialTextfield(messageInputElm);
+            resetTextfield();
             toggleButton();
-          });
+          })
       }
     }
 
@@ -241,19 +250,23 @@
       return false;
     }
 
+    // Resets the given MaterialTextField.
+    function resetTextfield() {
+      messageInputElm.value = '';
+    }
+
     // Saves a new message on the Cloud Firestore.
     function saveMessage(messageText) {
-
       // Add a new message entry to the Firebase database.
-      return firebase.firestore().collection('messages').add({
+      const userId = getUserId()
+      return firebase.firestore().collection('rooms').doc(userId).collection('messages').add({
+          userId: userId,
           name: getUserName(),
           text: messageText,
           profilePicUrl: getProfilePicUrl(),
           timestamp: firebase.firestore.FieldValue.serverTimestamp()
         })
-        .catch(function (error) {
-          console.error('Error writing new message to Firebase Database', error);
-        });
+        .catch(err => console.error('Error writing new message to Firebase Database', err))
     }
 
     // Display a message to the user using a Toast.
@@ -265,6 +278,111 @@
       setTimeout(() => {
         snackbarElm.classList.remove('_active')
       }, data.timeout);
+    }
+
+    // Loads chat messages history and listens for upcoming ones.
+    function loadMessages() {
+      const userId = getUserId()
+      // Create the query to load the last 12 messages and listen for new ones.
+      var query = firebase.firestore()
+        .collection('rooms').doc(userId)
+        .collection('messages').orderBy('timestamp', 'desc').limit(12);
+
+      // Start listening to the query.
+      query.onSnapshot(docs => {
+        docs.docChanges().forEach(change => {
+          if (change.type === 'removed') {
+            deleteMessage(change.doc.id);
+          } else {
+            var message = change.doc.data();
+            displayMessage(change.doc.id, message.timestamp, message.name,
+              message.text, message.profilePicUrl, message.imageUrl);
+          }
+        });
+      });
+    }
+
+    // Delete a Message from the UI.
+    function deleteMessage(id) {
+      var div = document.getElementById(id);
+      // If an element for that message exists we delete it.
+      if (div) {
+        div.parentNode.removeChild(div);
+      }
+    }
+
+    // Displays a Message in the UI.
+    function displayMessage(id, timestamp, name, text, picUrl, imageUrl) {
+      var div = document.querySelector(`#${id}`);
+      // If an element for that message does not exists yet we create it.
+      if (!div) {
+        var container = document.createElement('div');
+        
+        container.innerHTML = MESSAGE_TEMPLATE;
+        div = container.firstChild;
+        console.log(div)
+        div.setAttribute('id', id);
+        div.setAttribute('timestamp', timestamp);
+
+        console.log(div)
+        for (var i = 0; i < messageListElm.children.length; i++) {
+          var child = messageListElm.children[i];
+          var time = child.getAttribute('timestamp');
+          if (time && time > timestamp) {
+            break;
+          }
+        }
+        
+        console.log(child)
+        messageListElm.insertBefore(div, child);
+      }
+
+      if (picUrl) {
+        div.querySelector('.pic').style.backgroundImage = 'url(' + addSizeToGoogleProfilePic(picUrl) + ')';
+      }
+
+      div.querySelector('.name').textContent = name;
+
+      var messageElement = div.querySelector('.message');
+
+      if (text) { // If the message is text.
+        messageElement.textContent = text;
+        // Replace all line breaks by <br>.
+        messageElement.innerHTML = messageElement.innerHTML.replace(/\n/g, '<br>');
+      } else if (imageUrl) { // If the message is an image.
+        var image = document.createElement('img');
+        image.addEventListener('load', function () {
+          messageListElm.scrollTop = messageListElm.scrollHeight;
+        });
+        image.src = imageUrl + '&' + new Date().getTime();
+        messageElement.innerHTML = '';
+        messageElement.appendChild(image);
+      }
+
+      // Show the card fading-in and scroll to view the new message.
+      setTimeout(function () {
+        div.classList.add('visible')
+      }, 1);
+      messageListElm.scrollTop = messageListElm.scrollHeight;
+      messageListElm.focus();
+    }
+
+    var MESSAGE_TEMPLATE =
+    '<div class="message-container">' +
+      '<div class="spacing"><div class="pic"></div></div>' +
+      '<div class="message"></div>' +
+      '<div class="name"></div>' +
+    '</div>';
+
+    // Template for messages.
+    function createMessageContainer(id, timestamp) {
+      `<div class="message-container" id="${id}" timestamp="${timestamp}">
+      <div>${timestamp}</div>
+  <div class="spacing"><div class="pic"></div></div>
+  <div class="message"></div>
+  <div class="name"></div>
+  <hr>
+</div>`
     }
   </script>
 
